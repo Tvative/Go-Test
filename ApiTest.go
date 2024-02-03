@@ -7,18 +7,22 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
+// ApiTestResult is the result of a test case.
 type ApiTestResult struct {
-	TestStatus      bool        // TestStatus is the status of the test case.
-	TestDescription string      // TestDescription is the description of the test case.
-	TestError       interface{} // TestError is the error of the test case, if available.
-	TestTime        interface{} // TestTime is the time of the test case.
+	TestStatus      bool          // TestStatus is the status of the test case.
+	TestDescription string        // TestDescription is the description of the test case.
+	TestError       interface{}   // TestError is the error of the test case, if available.
+	TestTime        time.Duration // TestTime is the time of the test case.
 }
 
+// ApiTest is a struct that contains the test cases for an API.
 type ApiTest struct {
 	Tests       int64                   // Tests is the count fo total test cases.
 	PassedTests int64                   // PassedTests is the count of passed test cases.
@@ -28,6 +32,7 @@ type ApiTest struct {
 	ServerMux   *http.ServeMux          // ServerMux is the mux for the server.
 }
 
+// ApiTestRequest is the request for a test case.
 type ApiTestRequest struct {
 	Details        string      // Details is the details like case of the API call.
 	ReqParam       interface{} // ReqParam is the path parameters of the API call.
@@ -93,7 +98,7 @@ func generateApiUrl(server *httptest.Server, getPath string) string {
 }
 
 // addTestResult function adds a test result to the ApiTest struct.
-func (h *ApiTest) addTestResult(description string, reqError interface{}, isTestPassed bool, processTime interface{}) {
+func (h *ApiTest) addTestResult(description string, reqError interface{}, isTestPassed bool, processTime time.Duration) {
 	h.Tests++
 
 	if isTestPassed {
@@ -106,8 +111,24 @@ func (h *ApiTest) addTestResult(description string, reqError interface{}, isTest
 		TestStatus:      isTestPassed,
 		TestDescription: description,
 		TestError:       reqError,
-		TestTime:        processTime.(time.Duration),
+		TestTime:        processTime,
 	}
+}
+
+// GeneratePathParam function generates a query string from a map of path parameters.
+func GeneratePathParam(getParam map[string]string) string {
+	if len(getParam) == 0 {
+		return ""
+	}
+
+	var queryParts []string
+	for key, value := range getParam {
+		encodedKey := url.QueryEscape(key)
+		encodedValue := url.QueryEscape(value)
+		queryParts = append(queryParts, encodedKey+"="+encodedValue)
+	}
+
+	return "?" + strings.Join(queryParts, "&")
 }
 
 // CreateTest function creates a new test case for an API call.
@@ -124,17 +145,16 @@ func (h *ApiTest) CreateTest(httpReq ApiTestRequest) {
 	if httpReq.ReqBody != nil {
 		jsonBytes, err := json.Marshal(httpReq.ReqBody)
 		if err != nil {
-			h.addTestResult(httpReq.Details, err.Error(), false, nil)
+			h.addTestResult(httpReq.Details, err.Error(), false, 0)
 			return
 		}
 
 		reqBody = bytes.NewBufferString(string(jsonBytes))
 	}
 
-	fmt.Println(httpReq.ApiUrl + reqParam)
 	req, err := http.NewRequest(httpReq.ApiMethod, generateApiUrl(h.Server, httpReq.ApiUrl)+reqParam, reqBody)
 	if err != nil {
-		h.addTestResult(httpReq.Details, err.Error(), false, nil)
+		h.addTestResult(httpReq.Details, err.Error(), false, 0)
 		return
 	}
 
@@ -149,19 +169,18 @@ func (h *ApiTest) CreateTest(httpReq ApiTestRequest) {
 	startTime := time.Now()
 	resp, respErr := http.DefaultClient.Do(req)
 	endTime := time.Now()
-	duration := endTime.Sub(startTime)
 
 	if respErr != nil {
-		h.addTestResult(httpReq.Details, respErr.Error(), false, duration)
+		h.addTestResult(httpReq.Details, respErr.Error(), false, endTime.Sub(startTime))
 		return
 	}
 
 	if resp.StatusCode != httpReq.ExpectedStatus.(int) {
-		h.addTestResult(httpReq.Details, resp, false, duration)
+		h.addTestResult(httpReq.Details, resp, false, endTime.Sub(startTime))
 		return
 	}
 
-	h.addTestResult(httpReq.Details, nil, true, duration)
+	h.addTestResult(httpReq.Details, nil, true, endTime.Sub(startTime))
 	return
 }
 
